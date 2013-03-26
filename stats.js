@@ -108,7 +108,7 @@ function flushMetrics() {
       }
     }
 
-	// normally gauges are not reset.  so if we don't delete them, continue to persist previous value
+  // normally gauges are not reset.  so if we don't delete them, continue to persist previous value
     conf.deleteGauges = conf.deleteGauges || false;
     if (conf.deleteGauges) {
       for (var gauge_key in metrics.gauges) {
