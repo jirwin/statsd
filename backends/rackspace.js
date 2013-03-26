@@ -14,40 +14,67 @@
 
 var fs = require('fs');
 var path = require('path');
-
-
+var _ = require('underscore');
 
 function RackspaceBackend(startupTime, config, stats){
   var self = this;
+
   this.lastFlush = startupTime;
   this.lastException = startupTime;
   this.config = config.rax || {};
-  this.flush
+  this.filename = path.join(this.config.outputDir, startupTime + ".json");
 
   this.statsCache = {
     counters: {},
     timers: {}
   };
 
-  stats.on('flush', function(timestamp, metrics) { self.flush(timestamp, metrics); });
-  stats.on('status', function(callback) { self.status(callback); });
+  stats.on('flush', self.flush.bind(self));
+  stats.on('status', self.status.bind(self));
+}
+
+/**
+  * Clear the metrics cache
+  * @param {Metrics object} metrics Metrics provided by statsd.
+  */
+RackspaceBackend.prototype.clearMetrics = function(metrics) {
+  var self = this;
+
+  _.each(self.statsCache, function(val, type) {
+    if(!metrics[type]) {
+      return;
+    }
+
+    _.each(metrics[type], function(val, name) {
+      self.statsCache[type][name] = 0;
+    });
+  });
 };
 
+
 RackspaceBackend.prototype.flush = function(timestamp, metrics) {
-  var self = this;
+  var self = this,
+      out;
 
   console.log('Flushing stats at', new Date(timestamp * 1000).toString());
 
-  Object.keys(self.statsCache).forEach(function(type) {
+  _.each(self.statsCache, function(type) {
     if(!metrics[type]) return;
-    Object.keys(metrics[type]).forEach(function(name) {
+
+    _.each(metrics[type], function(name) {
       var value = metrics[type][name];
-      self.statsCache[type][name] || (self.statsCache[type][name] = 0);
-      self.statsCache[type][name] += value;
+      if(!self.statsCache[type][name]){
+        self.statsCache[type][name] = 0;
+      }
+      self.statsCache[type][name] = (self.statsCache[type][name] + value) / 2;
     });
   });
 
-  var out = {
+  if ((timestamp - this.lastFlush) < this.config.flushInterval) {
+    return;
+  }
+
+  out = {
     counters: this.statsCache.counters,
     timers: this.statsCache.timers,
     gauges: metrics.gauges,
@@ -55,7 +82,7 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
     counter_rates: metrics.counter_rates,
     sets: function (vals) {
       var ret = {};
-      for (val in vals) {
+      for (var val in vals) {
         ret[val] = vals[val].values();
       }
       return ret;
@@ -63,11 +90,10 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
     pctThreshold: metrics.pctThreshold
   };
 
-  fs.appendFile(path.join(this.config.rackspaceOutDir, timestamp + ".json"), JSON.stringify(out), function(err) {
-    if (err) throw err;
+  fs.appendFileSync(self.filename, JSON.stringify(out));
+  self.lastFlush = timestamp;
+  self.clearMetrics(metrics);
 
-    console.log("flushed stats to file.");
-  });
 };
 
 RackspaceBackend.prototype.status = function(write) {
