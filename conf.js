@@ -91,8 +91,6 @@ Optional Variables:
     flushInterval: 30,
     outputDir: '.'
   },
-  graphitePort: 2003,
-  graphiteHost: "graphite.example.com",
   port: 8125,
-  backends: [ "./backends/console", "./backends/rackspace" ]
+  backends: [ "./backends/rackspace" ]
 }
