@@ -26,7 +26,8 @@ function RackspaceBackend(startupTime, config, stats){
 
   this.statsCache = {
     counters: {},
-    timers: {}
+    timers: {},
+    gauges: {}
   };
 
   stats.on('flush', self.flush.bind(self));
@@ -39,37 +40,73 @@ function RackspaceBackend(startupTime, config, stats){
   */
 RackspaceBackend.prototype.clearMetrics = function(metrics) {
   var self = this;
-
+/*
   _.each(self.statsCache, function(val, type) {
     if(!metrics[type]) {
       return;
     }
 
     _.each(metrics[type], function(val, name) {
-      self.statsCache[type][name] = 0;
+      if(type == 'counters') {
+        self.statsCache[type][name] = 0;
+      } else if (type == 'timers') {
+        self.statsCache[type][name] = null;
+      }
+
     });
   });
+  */
+  self.statsCache = {
+    counters: {},
+    timers: {},
+    gauges: {}
+  };
 };
 
 
 RackspaceBackend.prototype.flush = function(timestamp, metrics) {
   var self = this,
       out;
-
-  console.log('Flushing stats at', new Date(timestamp * 1000).toString());
-
-  _.each(self.statsCache, function(type) {
+  //console.dir(metrics);
+  console.log('caching statsd metrics at', new Date(timestamp * 1000).toString());
+  _.each(self.statsCache, function(metric,type) {
+    
     if(!metrics[type]) return;
 
-    _.each(metrics[type], function(name) {
-      var value = metrics[type][name];
-      if(!self.statsCache[type][name]){
-        self.statsCache[type][name] = 0;
+    _.each(metrics[type], function(metricType,name) {
+      var value;
+
+      if(type == 'timers')
+      	if(metrics['timer_data'][name])
+          value = createTimerObject(metrics['timer_data'][name]);
+	else
+	  return;
+      else if (type == 'counters') {
+        value = { rate: metrics['counter_rates'][name], i: 1.0 };
       }
-      self.statsCache[type][name] = (self.statsCache[type][name] + value) / 2;
+      else if (type == 'gauges') {
+        value = { value: metrics[type][name] };
+      }
+
+      if (!self.statsCache[type][name]) {
+        self.statsCache[type][name] = value;
+	return;
+      }
+
+      if(type == 'counters') {
+	self.statsCache[type][name] = { 
+	    rate: (self.statsCache[type][name].rate * self.statsCache[type][name].i + value.rate) / (self.statsCache[type][name].i + 1.0), 
+	    i: self.statsCache[type][name].i + 1.0
+	  } 
+      } else if (type == 'timers') {
+      	self.statsCache[type][name] = calculateTimerCache(self.statsCache[type][name], metrics['timer_data'][name]); 
+      } else if (type == 'gauges') {
+        self.statsCache[type][name] = { value: metrics[type][name] };
+      }
     });
   });
 
+  //console.dir(self.statsCache);
   if ((timestamp - this.lastFlush) < this.config.flushInterval) {
     return;
   }
@@ -77,20 +114,19 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
   out = {
     counters: this.statsCache.counters,
     timers: this.statsCache.timers,
-    gauges: metrics.gauges,
-    timer_data: metrics.timer_data,
-    counter_rates: metrics.counter_rates,
-    sets: function (vals) {
-      var ret = {};
-      for (var val in vals) {
-        ret[val] = vals[val].values();
-      }
-      return ret;
-    }(metrics.sets),
-    pctThreshold: metrics.pctThreshold
+    gauges: this.statsCache.gauges,
   };
 
-  fs.appendFileSync(self.filename, JSON.stringify(out));
+  _.each( out.counters, function (counter, counters, counterName) {
+   delete counter.i;
+  });
+
+  delete out.counters['statsd.bad_lines_seen'];
+  delete out.counters['statsd.packets_received'];
+
+  console.log('flushing stats to disk');
+
+  fs.appendFileSync(self.filename, JSON.stringify(out) + '\n');
   self.lastFlush = timestamp;
   self.clearMetrics(metrics);
 
@@ -106,3 +142,27 @@ exports.init = function(startupTime, config, events) {
   var instance = new RackspaceBackend(startupTime, config, events);
   return true;
 };
+
+function calculateTimerCache(cached,current) {
+  var n = cached.count;
+  return {
+    mean_90: (cached.mean_90 * n + current.mean_90) / (n + 1),
+    upper_90: Math.max(cached.upper_90, current.upper_90),
+    upper: Math.max(cached.upper, current.upper),
+    lower: Math.min(cached.lower, current.lower),
+    count: cached.count + current.count,
+    mean: (cached.mean * n + current.mean) / (n + 1)
+    }
+}
+
+function createTimerObject(statsdTimer) {
+  return {
+    mean_90: statsdTimer.mean_90,
+    upper_90: statsdTimer.upper_90,
+    upper: statsdTimer.upper,
+    lower: statsdTimer.lower,
+    count: statsdTimer.count,
+    mean: statsdTimer.mean
+  }
+}
+
