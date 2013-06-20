@@ -68,7 +68,7 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
   var self = this,
       out;
   //console.dir(metrics);
-  console.log('Flushing stats at', new Date(timestamp * 1000).toString());
+  console.log('caching statsd metrics at', new Date(timestamp * 1000).toString());
   _.each(self.statsCache, function(metric,type) {
     
     if(!metrics[type]) return;
@@ -85,7 +85,7 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
         value = { rate: metrics['counter_rates'][name], i: 1.0 };
       }
       else if (type == 'gauges') {
-        value = metrics[type][name];
+        value = { value: metrics[type][name] };
       }
 
       if (!self.statsCache[type][name]) {
@@ -101,7 +101,7 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
       } else if (type == 'timers') {
       	self.statsCache[type][name] = calculateTimerCache(self.statsCache[type][name], metrics['timer_data'][name]); 
       } else if (type == 'gauges') {
-        self.statsCache[type][name] = metrics[type][name];
+        self.statsCache[type][name] = { value: metrics[type][name] };
       }
     });
   });
@@ -124,7 +124,9 @@ RackspaceBackend.prototype.flush = function(timestamp, metrics) {
   delete out.counters['statsd.bad_lines_seen'];
   delete out.counters['statsd.packets_received'];
 
-  fs.appendFileSync(self.filename, JSON.stringify(out));
+  console.log('flushing stats to disk');
+
+  fs.appendFileSync(self.filename, JSON.stringify(out) + '\n');
   self.lastFlush = timestamp;
   self.clearMetrics(metrics);
 

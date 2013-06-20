@@ -89,7 +89,7 @@ Optional Variables:
 {
   rax: {
     flushInterval: 30,
-    outputDir: '.'
+    outputDir: '../'
   },
   port: 8125,
   backends: [ "./backends/rackspace" ]
